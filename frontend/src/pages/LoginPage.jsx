@@ -14,13 +14,16 @@ export default function LoginPage({ onLogin }) {
     setError(null);
 
     try {
-      const response = await fetch('fetch(`${import.meta.env.VITE_API_URL}/api/auth/login`)', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ email, password })
-      });
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/auth/login`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, password })
+        }
+      );
 
       const data = await response.json();
 
@@ -28,14 +31,15 @@ export default function LoginPage({ onLogin }) {
         throw new Error(data.message || 'Login failed. Please check your credentials.');
       }
 
-      // Save token and user details to localStorage
+      // Save token + user
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
 
-      // Trigger the App.jsx state update to show the Dashboard
       onLogin();
+
     } catch (err) {
-      setError(err.message);
+      console.error(err);
+      setError(err.message || 'Something went wrong');
     } finally {
       setIsProcessing(false);
     }
@@ -63,7 +67,7 @@ export default function LoginPage({ onLogin }) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
             <input 
-              type="email" 
+              type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -75,7 +79,7 @@ export default function LoginPage({ onLogin }) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
             <input 
-              type="password" 
+              type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -87,7 +91,11 @@ export default function LoginPage({ onLogin }) {
           <button 
             type="submit"
             disabled={isProcessing}
-            className={`w-full text-white font-medium py-3 px-4 rounded-md transition flex items-center justify-center space-x-2 mt-2 ${isProcessing ? 'bg-blue-400 cursor-not-allowed' : 'bg-[#2a68d4] hover:bg-blue-700'}`}
+            className={`w-full text-white font-medium py-3 px-4 rounded-md transition flex items-center justify-center space-x-2 mt-2 ${
+              isProcessing
+                ? 'bg-blue-400 cursor-not-allowed'
+                : 'bg-[#2a68d4] hover:bg-blue-700'
+            }`}
           >
             {isProcessing ? (
               <>
@@ -99,7 +107,7 @@ export default function LoginPage({ onLogin }) {
             )}
           </button>
         </form>
-        
+
         <div className="mt-6 text-center text-sm text-gray-500">
           Backend Ledger Service | Immutable Transaction Engine
         </div>
