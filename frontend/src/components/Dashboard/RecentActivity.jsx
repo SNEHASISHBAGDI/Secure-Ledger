@@ -1,10 +1,16 @@
 import React from 'react';
 
 export default function RecentActivity({ activities = [] }) {
-  // Helper to format dates nicely
+  // Helper to format dates nicely with a fallback for older database entries
   const formatDate = (dateString) => {
+    if (!dateString) return 'Unknown Date';
+    
+    const date = new Date(dateString);
+    // Check if the date is actually valid before formatting
+    if (isNaN(date.getTime())) return 'Unknown Date';
+
     const options = { day: '2-digit', month: 'short', year: 'numeric' };
-    return new Date(dateString).toLocaleDateString('en-GB', options);
+    return date.toLocaleDateString('en-GB', options);
   };
 
   return (

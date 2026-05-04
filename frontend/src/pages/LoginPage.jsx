@@ -1,34 +1,39 @@
-// src/pages/LoginPage.jsx
 import React, { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 export default function LoginPage({ onLogin }) {
+  const [isLoginMode, setIsLoginMode] = useState(true); // Toggle between Login and Register
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
 
-  const handleLogin = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setIsProcessing(true);
     setError(null);
 
+    // Determine the endpoint and payload based on the current mode
+    const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
+    const bodyData = isLoginMode ? { email, password } : { name, email, password };
+
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/auth/login`,
+        `${import.meta.env.VITE_API_URL}${endpoint}`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ email, password })
+          body: JSON.stringify(bodyData)
         }
       );
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.message || 'Login failed. Please check your credentials.');
+        throw new Error(data.message || 'Authentication failed. Please check your details.');
       }
 
       // Save token + user
@@ -54,7 +59,9 @@ export default function LoginPage({ onLogin }) {
             S
           </div>
           <h2 className="text-2xl font-bold text-blue-950">Secure Ledger Portal</h2>
-          <p className="text-sm text-gray-500 mt-1">Sign in to access your accounts</p>
+          <p className="text-sm text-gray-500 mt-1">
+            {isLoginMode ? 'Sign in to access your accounts' : 'Create an account to get started'}
+          </p>
         </div>
 
         {error && (
@@ -63,7 +70,22 @@ export default function LoginPage({ onLogin }) {
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Only show the Name field if we are registering */}
+          {!isLoginMode && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+              <input 
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="John Doe"
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
             <input 
@@ -100,15 +122,30 @@ export default function LoginPage({ onLogin }) {
             {isProcessing ? (
               <>
                 <Loader2 className="animate-spin" size={18} />
-                <span>Authenticating...</span>
+                <span>{isLoginMode ? 'Authenticating...' : 'Registering...'}</span>
               </>
             ) : (
-              <span>Sign In</span>
+              <span>{isLoginMode ? 'Sign In' : 'Create Account'}</span>
             )}
           </button>
         </form>
 
-        <div className="mt-6 text-center text-sm text-gray-500">
+        {/* Toggle between Login and Register modes */}
+        <div className="mt-6 text-center text-sm text-gray-600">
+          {isLoginMode ? "Don't have an account? " : "Already have an account? "}
+          <button 
+            type="button"
+            onClick={() => {
+              setIsLoginMode(!isLoginMode);
+              setError(null); // Clear errors when switching modes
+            }}
+            className="text-blue-600 font-semibold hover:underline"
+          >
+            {isLoginMode ? 'Register here' : 'Sign in here'}
+          </button>
+        </div>
+
+        <div className="mt-6 text-center text-sm text-gray-400 border-t border-gray-100 pt-4">
           Backend Ledger Service | Immutable Transaction Engine
         </div>
       </div>
