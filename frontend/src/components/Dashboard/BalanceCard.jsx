@@ -15,7 +15,7 @@ export default function BalanceCard({ accountId, refreshTrigger }) {
       const token = localStorage.getItem('token');
 
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/transaction`,
+        `${import.meta.env.VITE_API_URL}/api/accounts/balance/${accountId}`,
         {
           method: "GET",
           headers: {
