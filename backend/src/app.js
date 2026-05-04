@@ -8,7 +8,7 @@ const app = express();
 const allowedOrigins = [
   "http://127.0.0.1:5500",
   "http://localhost:5173",
-  "https://atomicledger-1.onrender.com/" // 🔥 REPLACE WITH YOUR REAL FRONTEND URL
+  "https://atomicledger-1.onrender.com" // <-- Remove the trailing slash here
 ];
 
 // ✅ CORS middleware
