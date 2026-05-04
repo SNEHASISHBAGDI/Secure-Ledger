@@ -1,16 +1,30 @@
 import React from 'react';
 
 export default function RecentActivity({ activities = [] }) {
-  // Helper to format dates nicely with a fallback for older database entries
-  const formatDate = (dateString) => {
-    if (!dateString) return 'Unknown Date';
+  // Helper to format both dates and times nicely, with robust fallbacks
+  const formatDateTime = (dateValue) => {
+    if (!dateValue) return 'Unknown Date';
     
-    const date = new Date(dateString);
-    // Check if the date is actually valid before formatting
+    // Attempt standard parsing first
+    let date = new Date(dateValue);
+    
+    // If it comes back invalid, it might be a numeric Unix timestamp passed as a string
+    if (isNaN(date.getTime())) {
+      date = new Date(Number(dateValue));
+    }
+    
+    // If it's still invalid, return the fallback string to prevent crashes
     if (isNaN(date.getTime())) return 'Unknown Date';
 
-    const options = { day: '2-digit', month: 'short', year: 'numeric' };
-    return date.toLocaleDateString('en-GB', options);
+    // Format to show Date AND Time (using en-IN for Indian date formats given the ₹ symbol)
+    return date.toLocaleString('en-IN', { 
+      day: '2-digit', 
+      month: 'short', 
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
   };
 
   return (
@@ -25,12 +39,13 @@ export default function RecentActivity({ activities = [] }) {
             <div key={entry._id} className="flex justify-between items-center pb-3 border-b border-gray-100 last:border-0">
               <div>
                 <div className={`font-bold ${entry.type === 'CREDIT' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  {entry.type} ₹{entry.amount.toLocaleString()}
+                  {entry.type} ₹{entry.amount?.toLocaleString('en-IN') || 0}
                 </div>
-                <div className="text-xs text-gray-400 mt-0.5">Ref: {entry.transaction.slice(-6)}</div>
+                {/* Added optional chaining (?) to prevent crashes if transaction ID is missing */}
+                <div className="text-xs text-gray-400 mt-0.5">Ref: {entry.transaction?.slice(-6) || 'N/A'}</div>
               </div>
-              <div className="text-sm text-gray-500">
-                ({formatDate(entry.createdAt)})
+              <div className="text-sm text-gray-500 text-right">
+                {formatDateTime(entry.createdAt)}
               </div>
             </div>
           ))

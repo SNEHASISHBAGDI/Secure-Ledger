@@ -6,6 +6,7 @@ export default function LoginPage({ onLogin }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState(''); // Added confirm password
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
 
@@ -14,13 +15,20 @@ export default function LoginPage({ onLogin }) {
     setIsProcessing(true);
     setError(null);
 
+    // Form validation for registration
+    if (!isLoginMode && password !== confirmPassword) {
+      setError('Passwords do not match. Please try again.');
+      setIsProcessing(false);
+      return;
+    }
+
     // Determine the endpoint and payload based on the current mode
     const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
     const bodyData = isLoginMode ? { email, password } : { name, email, password };
 
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}${endpoint}`,
+        `${import.meta.env.VITE_API_URL || ''}${endpoint}`,
         {
           method: 'POST',
           headers: {
@@ -48,6 +56,13 @@ export default function LoginPage({ onLogin }) {
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const toggleMode = () => {
+    setIsLoginMode(!isLoginMode);
+    setError(null); // Clear errors when switching modes
+    setPassword(''); // Clear passwords for security
+    setConfirmPassword('');
   };
 
   return (
@@ -110,6 +125,21 @@ export default function LoginPage({ onLogin }) {
             />
           </div>
 
+          {/* Only show Confirm Password if we are registering */}
+          {!isLoginMode && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+              <input 
+                type="password"
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </div>
+          )}
+
           <button 
             type="submit"
             disabled={isProcessing}
@@ -135,10 +165,7 @@ export default function LoginPage({ onLogin }) {
           {isLoginMode ? "Don't have an account? " : "Already have an account? "}
           <button 
             type="button"
-            onClick={() => {
-              setIsLoginMode(!isLoginMode);
-              setError(null); // Clear errors when switching modes
-            }}
+            onClick={toggleMode}
             className="text-blue-600 font-semibold hover:underline"
           >
             {isLoginMode ? 'Register here' : 'Sign in here'}
