@@ -1,12 +1,13 @@
+// src/pages/LoginPage.jsx
 import React, { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ArrowLeft } from 'lucide-react';
 
-export default function LoginPage({ onLogin }) {
-  const [isLoginMode, setIsLoginMode] = useState(true); // Toggle between Login and Register
+export default function LoginPage({ onLogin, onBack, initialMode = true }) {
+  const [isLoginMode, setIsLoginMode] = useState(initialMode); 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState(''); // Added confirm password
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
 
@@ -22,13 +23,13 @@ export default function LoginPage({ onLogin }) {
       return;
     }
 
-    // Determine the endpoint and payload based on the current mode
+    // Determine the endpoint based on the backend routes
     const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
     const bodyData = isLoginMode ? { email, password } : { name, email, password };
 
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL || ''}${endpoint}`,
+        `${import.meta.env.VITE_API_URL}${endpoint}`,
         {
           method: 'POST',
           headers: {
@@ -44,7 +45,7 @@ export default function LoginPage({ onLogin }) {
         throw new Error(data.message || 'Authentication failed. Please check your details.');
       }
 
-      // Save token + user
+      // Save token + user returned from the Auth Controller
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
 
@@ -66,27 +67,36 @@ export default function LoginPage({ onLogin }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center font-sans text-gray-800 p-4">
-      <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+    <div className="min-h-screen flex items-center justify-center font-sans text-gray-800 p-4 relative bg-[#f8f9fa]">
+      
+      {/* Back Button */}
+      <button 
+        onClick={onBack}
+        className="absolute top-8 left-8 flex items-center gap-2 text-gray-500 hover:text-blue-600 transition"
+      >
+        <ArrowLeft size={20} />
+        <span className="font-medium">Back to Home</span>
+      </button>
+
+      <div className="w-full max-w-md bg-white rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 p-8">
         
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 bg-blue-600 rounded-md text-white flex items-center justify-center font-bold text-xl mb-4">
-            S
+          <div className="w-12 h-12 bg-blue-600 rounded-lg text-white flex items-center justify-center font-bold text-xl mb-4 italic">
+            A
           </div>
-          <h2 className="text-2xl font-bold text-blue-950">Secure Ledger Portal</h2>
+          <h2 className="text-2xl font-bold text-slate-800">AeroBank Portal</h2>
           <p className="text-sm text-gray-500 mt-1">
             {isLoginMode ? 'Sign in to access your accounts' : 'Create an account to get started'}
           </p>
         </div>
 
         {error && (
-          <div className="bg-rose-100 text-rose-800 p-3 rounded-md mb-6 text-sm font-medium text-center">
+          <div className="bg-rose-100 text-rose-800 p-3 rounded-md mb-6 text-sm font-medium text-center border border-rose-200">
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Only show the Name field if we are registering */}
           {!isLoginMode && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
@@ -96,7 +106,7 @@ export default function LoginPage({ onLogin }) {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="John Doe"
-                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow"
               />
             </div>
           )}
@@ -109,7 +119,7 @@ export default function LoginPage({ onLogin }) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow"
             />
           </div>
 
@@ -121,11 +131,10 @@ export default function LoginPage({ onLogin }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow"
             />
           </div>
 
-          {/* Only show Confirm Password if we are registering */}
           {!isLoginMode && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
@@ -135,7 +144,7 @@ export default function LoginPage({ onLogin }) {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow"
               />
             </div>
           )}
@@ -143,10 +152,10 @@ export default function LoginPage({ onLogin }) {
           <button 
             type="submit"
             disabled={isProcessing}
-            className={`w-full text-white font-medium py-3 px-4 rounded-md transition flex items-center justify-center space-x-2 mt-2 ${
+            className={`w-full text-white font-semibold py-3 px-4 rounded-lg transition-all flex items-center justify-center space-x-2 mt-2 ${
               isProcessing
                 ? 'bg-blue-400 cursor-not-allowed'
-                : 'bg-[#2a68d4] hover:bg-blue-700'
+                : 'bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20'
             }`}
           >
             {isProcessing ? (
@@ -160,7 +169,6 @@ export default function LoginPage({ onLogin }) {
           </button>
         </form>
 
-        {/* Toggle between Login and Register modes */}
         <div className="mt-6 text-center text-sm text-gray-600">
           {isLoginMode ? "Don't have an account? " : "Already have an account? "}
           <button 
@@ -170,10 +178,6 @@ export default function LoginPage({ onLogin }) {
           >
             {isLoginMode ? 'Register here' : 'Sign in here'}
           </button>
-        </div>
-
-        <div className="mt-6 text-center text-sm text-gray-400 border-t border-gray-100 pt-4">
-          Backend Ledger Service | Immutable Transaction Engine
         </div>
       </div>
     </div>

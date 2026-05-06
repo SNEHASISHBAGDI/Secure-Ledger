@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 
-
 const ledgerSchema = new mongoose.Schema({
     account: {
         type: mongoose.Schema.Types.ObjectId,
@@ -30,8 +29,9 @@ const ledgerSchema = new mongoose.Schema({
         required: [ true, "Ledger type is required" ],
         immutable: true
     }
-})
-
+}, {
+    timestamps: true // <-- This ensures createdAt and updatedAt are saved!
+});
 
 function preventLedgerModification() {
     throw new Error("Ledger entries are immutable and cannot be modified or deleted");
@@ -45,7 +45,6 @@ ledgerSchema.pre('deleteMany', preventLedgerModification);
 ledgerSchema.pre('updateMany', preventLedgerModification);
 ledgerSchema.pre("findOneAndDelete", preventLedgerModification);
 ledgerSchema.pre("findOneAndReplace", preventLedgerModification);
-
 
 const ledgerModel = mongoose.model('ledger', ledgerSchema);
 
