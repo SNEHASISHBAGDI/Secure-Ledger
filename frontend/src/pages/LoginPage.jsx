@@ -80,11 +80,12 @@ export default function LoginPage({ onLogin, onBack, initialMode = true }) {
 
       <div className="w-full max-w-md bg-white rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 p-8">
         
+        {/* UPDATED BRANDING HERE */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-12 h-12 bg-blue-600 rounded-lg text-white flex items-center justify-center font-bold text-xl mb-4 italic">
-            A
+            S
           </div>
-          <h2 className="text-2xl font-bold text-slate-800">AeroBank Portal</h2>
+          <h2 className="text-2xl font-bold text-slate-800">Secure Ledger Portal</h2>
           <p className="text-sm text-gray-500 mt-1">
             {isLoginMode ? 'Sign in to access your accounts' : 'Create an account to get started'}
           </p>

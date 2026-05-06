@@ -1,12 +1,9 @@
+// src/components/sections/Hero.jsx
 import React from 'react';
 import { Button } from '../ui/Button';
 import heroImg from "../../assets/bankingpng.png";
 
-interface HeroProps {
-  onRegisterClick?: () => void;
-}
-
-export function Hero({ onRegisterClick }: HeroProps) {
+export function Hero({ onRegisterClick }) {
   return (
     <section className="pt-24 pb-32 bg-gradient-to-b from-[#eef2f6] to-[#f8f9fa] overflow-hidden relative">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col lg:flex-row items-center gap-12 relative z-10">
