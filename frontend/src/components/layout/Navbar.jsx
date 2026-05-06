@@ -1,21 +1,13 @@
-// src/components/layout/Navbar.tsx
+// src/components/layout/Navbar.jsx
 import React from 'react';
 import { Button } from '../ui/Button';
 
-// 1. Define the props interface
-interface NavbarProps {
-  onLoginClick?: () => void;
-  onRegisterClick?: () => void;
-}
-
-// 2. Apply the interface to the component parameters
-export function Navbar({ onLoginClick, onRegisterClick }: NavbarProps) {
+export function Navbar({ onLoginClick, onRegisterClick }) {
   return (
     <nav className="fixed top-0 w-full bg-white/90 backdrop-blur-md border-b border-gray-100 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
           
-          {/* UPDATED BRANDING HERE */}
           <div className="flex items-center gap-2 cursor-pointer">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold italic">S</div>
             <span className="text-2xl font-bold text-slate-800">Secure Ledger</span>
