@@ -16,14 +16,12 @@ export default function LoginPage({ onLogin, onBack, initialMode = true }) {
     setIsProcessing(true);
     setError(null);
 
-    // Form validation for registration
     if (!isLoginMode && password !== confirmPassword) {
       setError('Passwords do not match. Please try again.');
       setIsProcessing(false);
       return;
     }
 
-    // Determine the endpoint based on the backend routes
     const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
     const bodyData = isLoginMode ? { email, password } : { name, email, password };
 
@@ -45,7 +43,6 @@ export default function LoginPage({ onLogin, onBack, initialMode = true }) {
         throw new Error(data.message || 'Authentication failed. Please check your details.');
       }
 
-      // Save token + user returned from the Auth Controller
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
 
@@ -61,15 +58,14 @@ export default function LoginPage({ onLogin, onBack, initialMode = true }) {
 
   const toggleMode = () => {
     setIsLoginMode(!isLoginMode);
-    setError(null); // Clear errors when switching modes
-    setPassword(''); // Clear passwords for security
+    setError(null);
+    setPassword('');
     setConfirmPassword('');
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center font-sans text-gray-800 p-4 relative bg-[#f8f9fa]">
       
-      {/* Back Button */}
       <button 
         onClick={onBack}
         className="absolute top-8 left-8 flex items-center gap-2 text-gray-500 hover:text-blue-600 transition"
@@ -80,7 +76,7 @@ export default function LoginPage({ onLogin, onBack, initialMode = true }) {
 
       <div className="w-full max-w-md bg-white rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 p-8">
         
-        {/* UPDATED BRANDING HERE */}
+        {/* SECURE LEDGER BRANDING UPDATED HERE */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-12 h-12 bg-blue-600 rounded-lg text-white flex items-center justify-center font-bold text-xl mb-4 italic">
             S
