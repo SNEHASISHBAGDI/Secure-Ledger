@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button } from '../ui/Button';
-import heroImg from '../../assets/hero.png';
+import heroImg from "../../assets/bankingpng.png";
 
 interface HeroProps {
   onRegisterClick?: () => void;
@@ -15,7 +15,7 @@ export function Hero({ onRegisterClick }: HeroProps) {
             Simple. Secure.<br />Global Banking.
           </h1>
           <p className="text-lg text-slate-600 mb-8 max-w-xl mx-auto lg:mx-0 leading-relaxed">
-            Effortlessly manage and transfer your finances worldwide with AeroBank's intuitive platform.
+            Effortlessly manage and transfer your finances worldwide with Secure Ledger platform.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4">
             <Button 
