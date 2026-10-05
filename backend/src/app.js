@@ -4,17 +4,16 @@ const cors = require("cors");
 
 const app = express();
 
-// ✅ Allowed origins (local + deployed frontend)
+// Allowed origins
 const allowedOrigins = [
   "http://127.0.0.1:5500",
   "http://localhost:5173",
-  "https://atomicledger-1.onrender.com" // <-- Remove the trailing slash here
+  "https://atomicledger-1.onrender.com"
 ];
 
-// ✅ CORS middleware
+// CORS middleware
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin (Postman, mobile apps, etc.)
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.includes(origin)) {
@@ -26,21 +25,21 @@ app.use(cors({
   credentials: true
 }));
 
-// ✅ Middlewares
+// Middlewares
 app.use(express.json());
 app.use(cookieParser());
 
-// ✅ Routes
+// Routes
 const authRouter = require("./routes/auth.routes");
 const accountRouter = require("./routes/account.routes");
 const transactionRoutes = require("./routes/transaction.routes");
 
-// ✅ Health check route
+// Health check route
 app.get("/", (req, res) => {
   res.send("Ledger Service is up and running");
 });
 
-// ✅ API routes
+// API routes
 app.use("/api/auth", authRouter);
 app.use("/api/accounts", accountRouter);
 app.use("/api/transactions", transactionRoutes);
