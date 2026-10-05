@@ -1,72 +1,137 @@
-const accountModel = require("../models/account.model");
+const prisma = require("../config/prisma");
 
-
+/**
+ * - Create Account Controller
+ * - POST /api/account
+ */
 async function createAccountController(req, res) {
+    try {
+        const userId = req.user.id || req.user._id;
 
-    const user = req.user;
+        const account = await prisma.account.create({
+            data: {
+                userId: userId
+            }
+        });
 
-    const account = await accountModel.create({
-        user: user._id
-    })
-
-    res.status(201).json({
-        account
-    })
-
+        res.status(201).json({
+            account: {
+                ...account,
+                _id: account.id
+            }
+        });
+    } catch (error) {
+        console.error("Error creating account:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
 }
 
+/**
+ * - Get User Accounts Controller
+ * - GET /api/account
+ */
 async function getUserAccountsController(req, res) {
+    try {
+        const userId = req.user.id || req.user._id;
 
-    const accounts = await accountModel.find({ user: req.user._id });
+        const accounts = await prisma.account.findMany({
+            where: { userId: userId }
+        });
 
-    res.status(200).json({
-        accounts
-    })
+        const formattedAccounts = accounts.map(acc => ({
+            ...acc,
+            _id: acc.id
+        }));
+
+        res.status(200).json({
+            accounts: formattedAccounts
+        });
+    } catch (error) {
+        console.error("Error fetching user accounts:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
 }
 
+/**
+ * - Get Account Balance Controller
+ * - GET /api/account/:accountId/balance
+ */
 async function getAccountBalanceController(req, res) {
     const { accountId } = req.params;
+    const userId = req.user.id || req.user._id;
 
-    const account = await accountModel.findOne({
-        _id: accountId,
-        user: req.user._id
-    })
+    try {
+        const account = await prisma.account.findFirst({
+            where: {
+                id: accountId,
+                userId: userId
+            }
+        });
 
-    if (!account) {
-        return res.status(404).json({
-            message: "Account not found"
-        })
+        if (!account) {
+            return res.status(404).json({
+                message: "Account not found"
+            });
+        }
+
+        // Return direct balance if field exists on model, or aggregate ledger if calculated
+        let balance = account.balance;
+        if (balance === undefined || balance === null) {
+            const aggregate = await prisma.ledger.aggregate({
+                _sum: { amount: true },
+                where: { accountId: account.id }
+            });
+            balance = aggregate._sum.amount || 0;
+        }
+
+        res.status(200).json({
+            accountId: account.id,
+            _id: account.id,
+            balance: balance
+        });
+    } catch (error) {
+        // Handle malformed/invalid UUID strings gracefully
+        if (error.code === 'P2023') {
+            return res.status(404).json({ message: "Account not found" });
+        }
+        console.error("Error fetching account balance:", error);
+        res.status(500).json({ message: "Internal server error" });
     }
+}
 
-    const balance = await account.getBalance();
-
-    res.status(200).json({
-        accountId: account._id,
-        balance: balance
-    })
-}    
-
-//Recent Transactions.(It fetches the last 5 ledger entries for the account.)
-
-const ledgerModel = require("../models/ledger.model");
-
-// ... your existing functions ...
-
+/**
+ * - Recent Activity Controller
+ * - GET /api/account/:accountId/activity
+ * - Fetches the last 5 ledger entries for the account
+ */
 async function getAccountActivityController(req, res) {
     const { accountId } = req.params;
 
-    // Fetch the last 5 ledger entries for this account, newest first
-    const activity = await ledgerModel.find({ account: accountId })
-        .sort({ createdAt: -1 })
-        .limit(5);
+    try {
+        const activity = await prisma.ledger.findMany({
+            where: { accountId: accountId },
+            orderBy: { createdAt: 'desc' },
+            take: 5
+        });
 
-    res.status(200).json({ activity });
+        const formattedActivity = activity.map(item => ({
+            ...item,
+            _id: item.id
+        }));
+
+        res.status(200).json({ activity: formattedActivity });
+    } catch (error) {
+        if (error.code === 'P2023') {
+            return res.status(200).json({ activity: [] });
+        }
+        console.error("Error fetching account activity:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
 }
-
 
 module.exports = {
     createAccountController,
     getUserAccountsController,
     getAccountBalanceController,
-    getAccountActivityController // <-- Don't forget to export it!
-}
+    getAccountActivityController
+};
