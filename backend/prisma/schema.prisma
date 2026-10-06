@@ -12,6 +12,12 @@ enum AccountStatus {
   CLOSED
 }
 
+enum AccountRole {
+  CUSTOMER
+  SYSTEM_FUNDING
+  SYSTEM_CAPITAL
+}
+
 enum TransactionStatus {
   PENDING
   COMPLETED
@@ -39,6 +45,7 @@ model User {
 model Account {
   id        String        @id @default(uuid())
   userId    String
+  role      AccountRole   @default(CUSTOMER)
   status    AccountStatus @default(ACTIVE)
   currency  String        @default("INR")
   createdAt DateTime      @default(now())

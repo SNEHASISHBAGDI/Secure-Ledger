@@ -1,24 +1,32 @@
 const prisma = require("../config/prisma");
 const emailService = require("../services/email.service");
+const { Prisma } = require("@prisma/client");
 
 /**
  * Calculates net balance for an account derived from DEBIT and CREDIT ledger entries
  */
-async function getAccountBalance(accountId) {
-    const credits = await prisma.ledger.aggregate({
+async function getAccountBalance(accountId, client = prisma) {
+    const credits = await client.ledger.aggregate({
         where: { accountId: accountId, type: "CREDIT" },
         _sum: { amount: true }
     });
 
-    const debits = await prisma.ledger.aggregate({
+    const debits = await client.ledger.aggregate({
         where: { accountId: accountId, type: "DEBIT" },
         _sum: { amount: true }
     });
 
-    const creditSum = Number(credits._sum.amount || 0);
-    const debitSum = Number(debits._sum.amount || 0);
+    return new Prisma.Decimal(credits._sum.amount || 0).minus(debits._sum.amount || 0);
+}
 
-    return creditSum - debitSum;
+function parseAmount(amount) {
+    if ((typeof amount !== "number" && typeof amount !== "string") ||
+        !/^\d{1,15}(?:\.\d{1,4})?$/.test(String(amount))) {
+        return null;
+    }
+
+    const parsed = new Prisma.Decimal(String(amount));
+    return parsed.isPositive() ? parsed : null;
 }
 
 /**
@@ -27,12 +35,23 @@ async function getAccountBalance(accountId) {
  */
 async function createTransaction(req, res) {
     // 1. Validate request
-    const { fromAccount, toAccount, amount, idempotencyKey } = req.body;
+    const { fromAccount, toAccount, amount, idempotencyKey } = req.body || {};
 
-    if (!fromAccount || !toAccount || !amount || !idempotencyKey) {
+    if (!fromAccount || !toAccount || amount === undefined || amount === null ||
+        typeof idempotencyKey !== "string" || !idempotencyKey.trim() ||
+        idempotencyKey.length > 255) {
         return res.status(400).json({
-            message: "FromAccount, toAccount, amount and idempotencyKey are required"
+            message: "FromAccount, toAccount, amount and a valid idempotencyKey are required"
         });
+    }
+
+    if (fromAccount === toAccount) {
+        return res.status(400).json({ message: "FromAccount and toAccount must be different" });
+    }
+
+    const parsedAmount = parseAmount(amount);
+    if (!parsedAmount) {
+        return res.status(400).json({ message: "Amount must be positive and have at most 4 decimal places" });
     }
 
     try {
@@ -50,71 +69,70 @@ async function createTransaction(req, res) {
             });
         }
 
-        // 2. Validate idempotency key
-        const existingTx = await prisma.transaction.findUnique({
-            where: { idempotencyKey: idempotencyKey }
-        });
-
-        if (existingTx) {
-            const formattedTx = {
-                ...existingTx,
-                _id: existingTx.id,
-                fromAccount: existingTx.fromAccountId || existingTx.fromAccount,
-                toAccount: existingTx.toAccountId || existingTx.toAccount
-            };
-
-            if (existingTx.status === "COMPLETED") {
-                return res.status(200).json({
-                    message: "Transaction already processed",
-                    transaction: formattedTx
-                });
-            }
-
-            if (existingTx.status === "PENDING") {
-                return res.status(200).json({
-                    message: "Transaction is still processing"
-                });
-            }
-
-            if (existingTx.status === "FAILED") {
-                return res.status(500).json({
-                    message: "Transaction processing failed, please retry"
-                });
-            }
-
-            if (existingTx.status === "REVERSED") {
-                return res.status(500).json({
-                    message: "Transaction was reversed, please retry"
-                });
-            }
+        if (fromUserAccount.userId !== (req.user.id || req.user._id) ||
+            fromUserAccount.role !== "CUSTOMER" ||
+            toUserAccount.role !== "CUSTOMER") {
+            return res.status(403).json({ message: "Transactions are only allowed between your customer accounts" });
         }
 
-        // 3. Check account status
-        if (fromUserAccount.status !== "ACTIVE" || toUserAccount.status !== "ACTIVE") {
-            return res.status(400).json({
-                message: "Both fromAccount and toAccount must be ACTIVE to process transaction"
-            });
-        }
-
-        // 4. Derive sender balance from ledger
-        const balance = await getAccountBalance(fromAccount);
-
-        if (balance < amount) {
-            return res.status(400).json({
-                message: `Insufficient balance. Current balance is ${balance}. Requested amount is ${amount}`
-            });
-        }
-
-        // 5-9. Execute double-entry ledger flow inside an interactive transaction
-        let transaction;
+        // 4-9. Lock both accounts and execute the ledger flow atomically.
+        let result;
         try {
-            transaction = await prisma.$transaction(async (tx) => {
-                // 5. Create transaction (PENDING)
+            result = await prisma.$transaction(async (tx) => {
+                await tx.$queryRaw`
+                    SELECT "id"
+                    FROM "Account"
+                    WHERE "id" IN (${fromAccount}, ${toAccount})
+                    ORDER BY "id"
+                    FOR UPDATE
+                `;
+
+                const lockedAccounts = await tx.account.findMany({
+                    where: { id: { in: [fromAccount, toAccount] } }
+                });
+                const lockedFromAccount = lockedAccounts.find((account) => account.id === fromAccount);
+                const lockedToAccount = lockedAccounts.find((account) => account.id === toAccount);
+
+                const existingTx = await tx.transaction.findUnique({
+                    where: { idempotencyKey }
+                });
+
+                if (existingTx) {
+                    if (existingTx.fromAccountId !== fromAccount ||
+                        existingTx.toAccountId !== toAccount ||
+                        !new Prisma.Decimal(existingTx.amount).equals(parsedAmount)) {
+                        return { conflict: true };
+                    }
+                    if (existingTx.status === "COMPLETED") {
+                        return { transaction: existingTx, duplicate: true };
+                    }
+                    if (existingTx.status === "PENDING") {
+                        return { pending: true };
+                    }
+                    return { conflict: true };
+                }
+
+                if (!lockedFromAccount || !lockedToAccount ||
+                    lockedFromAccount.status !== "ACTIVE" ||
+                    lockedToAccount.status !== "ACTIVE") {
+                    return { inactiveAccounts: true };
+                }
+                if (lockedFromAccount.userId !== (req.user.id || req.user._id) ||
+                    lockedFromAccount.role !== "CUSTOMER" ||
+                    lockedToAccount.role !== "CUSTOMER") {
+                    return { unauthorizedAccounts: true };
+                }
+
+                const balance = await getAccountBalance(fromAccount, tx);
+                if (balance.lessThan(parsedAmount)) {
+                    return { insufficientBalance: balance };
+                }
+
                 const createdTx = await tx.transaction.create({
                     data: {
                         fromAccountId: fromAccount,
                         toAccountId: toAccount,
-                        amount: Number(amount),
+                        amount: parsedAmount,
                         idempotencyKey: idempotencyKey,
                         status: "PENDING"
                     }
@@ -124,7 +142,7 @@ async function createTransaction(req, res) {
                 await tx.ledger.create({
                     data: {
                         accountId: fromAccount,
-                        amount: Number(amount),
+                        amount: parsedAmount,
                         transactionId: createdTx.id,
                         type: "DEBIT"
                     }
@@ -137,7 +155,7 @@ async function createTransaction(req, res) {
                 await tx.ledger.create({
                     data: {
                         accountId: toAccount,
-                        amount: Number(amount),
+                        amount: parsedAmount,
                         transactionId: createdTx.id,
                         type: "CREDIT"
                     }
@@ -154,14 +172,39 @@ async function createTransaction(req, res) {
                 timeout: 25000 // Accommodate 15s simulated delay
             });
         } catch (error) {
+            if (error.code === "P2002") {
+                return res.status(409).json({
+                    message: "Transaction with this idempotency key already exists"
+                });
+            }
             console.error("Prisma Transaction Execution Error:", error);
+            return res.status(500).json({ message: "Transaction could not be processed" });
+        }
+
+        if (result.conflict) {
+            return res.status(409).json({
+                message: "Idempotency key was already used for a different or non-retryable transaction"
+            });
+        }
+        if (result.pending) {
+            return res.status(409).json({ message: "Transaction with this idempotency key is still processing" });
+        }
+        if (result.inactiveAccounts) {
             return res.status(400).json({
-                message: "Transaction is Pending due to some issue, please retry after sometime"
+                message: "Both fromAccount and toAccount must be ACTIVE to process transaction"
+            });
+        }
+        if (result.unauthorizedAccounts) {
+            return res.status(403).json({ message: "Transactions are only allowed between your customer accounts" });
+        }
+        if (result.insufficientBalance) {
+            return res.status(400).json({
+                message: `Insufficient balance. Current balance is ${result.insufficientBalance.toString()}. Requested amount is ${parsedAmount.toString()}`
             });
         }
 
         // 10. Send email notification
-        if (emailService && typeof emailService.sendTransactionEmail === "function") {
+        if (!result.duplicate && emailService && typeof emailService.sendTransactionEmail === "function") {
             try {
                 await emailService.sendTransactionEmail(req.user.email, req.user.name, amount, toAccount);
             } catch (emailErr) {
@@ -169,6 +212,7 @@ async function createTransaction(req, res) {
             }
         }
 
+        const transaction = result.transaction;
         const formattedTransaction = {
             ...transaction,
             _id: transaction.id,
@@ -176,8 +220,8 @@ async function createTransaction(req, res) {
             toAccount: transaction.toAccountId || transaction.toAccount
         };
 
-        return res.status(201).json({
-            message: "Transaction completed successfully",
+        return res.status(result.duplicate ? 200 : 201).json({
+            message: result.duplicate ? "Transaction already processed" : "Transaction completed successfully",
             transaction: formattedTransaction
         });
 
@@ -194,43 +238,100 @@ async function createTransaction(req, res) {
  * - Create Initial Funds Transaction (System User -> User Account)
  */
 async function createInitialFundsTransaction(req, res) {
-    const { toAccount, amount, idempotencyKey } = req.body;
+    const { toAccount, amount, idempotencyKey } = req.body || {};
 
-    if (!toAccount || !amount || !idempotencyKey) {
+    if (!toAccount || amount === undefined || amount === null || !idempotencyKey ||
+        typeof idempotencyKey !== "string" || !idempotencyKey.trim() || idempotencyKey.length > 255) {
         return res.status(400).json({
             message: "toAccount, amount and idempotencyKey are required"
         });
+    }
+
+    const parsedAmount = parseAmount(amount);
+    if (!parsedAmount) {
+        return res.status(400).json({ message: "Amount must be positive and have at most 4 decimal places" });
     }
 
     try {
         const userId = req.user.id || req.user._id;
 
         const toUserAccount = await prisma.account.findUnique({
-            where: { id: toAccount }
+            where: { id: toAccount },
+            include: { user: true }
         });
 
-        if (!toUserAccount) {
+        if (!toUserAccount || toUserAccount.role !== "CUSTOMER" ||
+            toUserAccount.user.systemUser || toUserAccount.status !== "ACTIVE") {
             return res.status(400).json({
-                message: "Invalid toAccount"
+                message: "Target account must be an ACTIVE customer account"
             });
         }
 
         const fromUserAccount = await prisma.account.findFirst({
-            where: { userId: userId }
+            where: { userId, role: "SYSTEM_FUNDING" }
         });
 
         if (!fromUserAccount) {
             return res.status(400).json({
-                message: "System user account not found"
+                message: "System funding account not found"
             });
         }
 
-        const transaction = await prisma.$transaction(async (tx) => {
+        if (fromUserAccount.status !== "ACTIVE") {
+            return res.status(400).json({ message: "System funding account is not ACTIVE" });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`
+                SELECT "id"
+                FROM "Account"
+                WHERE "id" IN (${fromUserAccount.id}, ${toAccount})
+                ORDER BY "id"
+                FOR UPDATE
+            `;
+
+            const lockedAccounts = await tx.account.findMany({
+                where: { id: { in: [fromUserAccount.id, toAccount] } },
+                include: { user: true }
+            });
+            const lockedFundingAccount = lockedAccounts.find((account) => account.id === fromUserAccount.id);
+            const lockedTargetAccount = lockedAccounts.find((account) => account.id === toAccount);
+
+            if (!lockedFundingAccount || lockedFundingAccount.status !== "ACTIVE") {
+                return { inactiveFundingAccount: true };
+            }
+            if (!lockedTargetAccount || lockedTargetAccount.status !== "ACTIVE" ||
+                lockedTargetAccount.role !== "CUSTOMER" || lockedTargetAccount.user.systemUser) {
+                return { inactiveTargetAccount: true };
+            }
+
+            const existingTx = await tx.transaction.findUnique({
+                where: { idempotencyKey }
+            });
+
+            if (existingTx) {
+                if (existingTx.fromAccountId !== fromUserAccount.id ||
+                    existingTx.toAccountId !== toAccount ||
+                    !new Prisma.Decimal(existingTx.amount).equals(parsedAmount)) {
+                    return { conflict: true };
+                }
+
+                if (existingTx.status === "COMPLETED") {
+                    return { transaction: existingTx, duplicate: true };
+                }
+                return { pending: true };
+            }
+
+            const balance = await getAccountBalance(fromUserAccount.id, tx);
+            if (balance.lessThan(parsedAmount)) {
+                return { insufficientBalance: balance };
+            }
+
             const createdTx = await tx.transaction.create({
                 data: {
                     fromAccountId: fromUserAccount.id,
                     toAccountId: toAccount,
-                    amount: Number(amount),
+                    amount: parsedAmount,
                     idempotencyKey: idempotencyKey,
                     status: "PENDING"
                 }
@@ -239,7 +340,7 @@ async function createInitialFundsTransaction(req, res) {
             await tx.ledger.create({
                 data: {
                     accountId: fromUserAccount.id,
-                    amount: Number(amount),
+                    amount: parsedAmount,
                     transactionId: createdTx.id,
                     type: "DEBIT"
                 }
@@ -248,7 +349,7 @@ async function createInitialFundsTransaction(req, res) {
             await tx.ledger.create({
                 data: {
                     accountId: toAccount,
-                    amount: Number(amount),
+                    amount: parsedAmount,
                     transactionId: createdTx.id,
                     type: "CREDIT"
                 }
@@ -259,9 +360,30 @@ async function createInitialFundsTransaction(req, res) {
                 data: { status: "COMPLETED" }
             });
 
-            return updatedTx;
+            return { transaction: updatedTx };
         });
 
+        if (result.conflict) {
+            return res.status(409).json({ message: "Idempotency key was already used for a different transaction" });
+        }
+        if (result.pending) {
+            return res.status(409).json({ message: "Transaction with this idempotency key is not completed" });
+        }
+        if (result.inactiveFundingAccount) {
+            return res.status(400).json({ message: "System funding account is not ACTIVE" });
+        }
+        if (result.inactiveTargetAccount) {
+            return res.status(400).json({
+                message: "Target account must be an ACTIVE customer account"
+            });
+        }
+        if (result.insufficientBalance) {
+            return res.status(400).json({
+                message: `Insufficient system funding balance. Current balance is ${result.insufficientBalance.toString()}. Requested amount is ${parsedAmount.toString()}`
+            });
+        }
+
+        const transaction = result.transaction;
         const formattedTransaction = {
             ...transaction,
             _id: transaction.id,
@@ -269,14 +391,17 @@ async function createInitialFundsTransaction(req, res) {
             toAccount: transaction.toAccountId || transaction.toAccount
         };
 
-        return res.status(201).json({
-            message: "Initial funds transaction completed successfully",
+        return res.status(result.duplicate ? 200 : 201).json({
+            message: result.duplicate ? "Transaction already processed" : "Initial funds transaction completed successfully",
             transaction: formattedTransaction
         });
 
     } catch (err) {
         if (err.code === 'P2023') {
             return res.status(400).json({ message: "Invalid toAccount" });
+        }
+        if (err.code === 'P2002') {
+            return res.status(409).json({ message: "Transaction with this idempotency key already exists" });
         }
         console.error("Error in createInitialFundsTransaction:", err);
         return res.status(500).json({ message: "Internal server error" });

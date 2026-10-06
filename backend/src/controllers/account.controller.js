@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const { Prisma } = require("@prisma/client");
 
 /**
  * - Create Account Controller
@@ -74,15 +75,19 @@ async function getAccountBalanceController(req, res) {
             });
         }
 
-        // Return direct balance if field exists on model, or aggregate ledger if calculated
-        let balance = account.balance;
-        if (balance === undefined || balance === null) {
-            const aggregate = await prisma.ledger.aggregate({
+        const [credits, debits] = await Promise.all([
+            prisma.ledger.aggregate({
                 _sum: { amount: true },
-                where: { accountId: account.id }
-            });
-            balance = aggregate._sum.amount || 0;
-        }
+                where: { accountId: account.id, type: "CREDIT" }
+            }),
+            prisma.ledger.aggregate({
+                _sum: { amount: true },
+                where: { accountId: account.id, type: "DEBIT" }
+            })
+        ]);
+        const balance = credits._sum.amount || debits._sum.amount
+            ? new Prisma.Decimal(credits._sum.amount || 0).minus(debits._sum.amount || 0)
+            : 0;
 
         res.status(200).json({
             accountId: account.id,
@@ -106,8 +111,17 @@ async function getAccountBalanceController(req, res) {
  */
 async function getAccountActivityController(req, res) {
     const { accountId } = req.params;
+    const userId = req.user.id || req.user._id;
 
     try {
+        const account = await prisma.account.findFirst({
+            where: { id: accountId, userId }
+        });
+
+        if (!account) {
+            return res.status(404).json({ message: "Account not found" });
+        }
+
         const activity = await prisma.ledger.findMany({
             where: { accountId: accountId },
             orderBy: { createdAt: 'desc' },
@@ -122,7 +136,7 @@ async function getAccountActivityController(req, res) {
         res.status(200).json({ activity: formattedActivity });
     } catch (error) {
         if (error.code === 'P2023') {
-            return res.status(200).json({ activity: [] });
+            return res.status(404).json({ message: "Account not found" });
         }
         console.error("Error fetching account activity:", error);
         res.status(500).json({ message: "Internal server error" });

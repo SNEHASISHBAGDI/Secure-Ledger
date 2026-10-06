@@ -1,0 +1,5 @@
+-- CreateEnum
+CREATE TYPE "AccountRole" AS ENUM ('CUSTOMER', 'SYSTEM_FUNDING', 'SYSTEM_CAPITAL');
+
+-- AlterTable
+ALTER TABLE "Account" ADD COLUMN "role" "AccountRole" NOT NULL DEFAULT 'CUSTOMER';
