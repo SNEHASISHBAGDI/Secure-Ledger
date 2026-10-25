@@ -2,6 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #f4f7f9; /* Matches the light gray background in the image */
+@layer base {
+  body {
+    @apply bg-app-bg text-content-primary antialiased selection:bg-primary selection:text-white;
+  }
+}
+
+/* Custom scrollbar for a polished look */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-app-bg;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-app-border rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-content-secondary;
 }
