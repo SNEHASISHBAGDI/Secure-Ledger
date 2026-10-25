@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Loader2, ArrowRight, Wallet, CheckCircle, AlertCircle, Send } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface Account {
   _id: string;
@@ -11,6 +11,7 @@ export const TransferPage: React.FC = () => {
   const [step, setStep] = useState(1);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
+  const [balance, setBalance] = useState<number | null>(null);
 
   // Form State
   const [fromAccount, setFromAccount] = useState<string>('');
@@ -20,23 +21,24 @@ export const TransferPage: React.FC = () => {
   // Transaction State
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<{ type: 'success' | 'error' | 'timeout', message: string, txId?: string } | null>(null);
-  const isTransferInFlight = useRef(false);
-  const idempotencyKey = useRef<string | null>(null);
 
   const API_BASE = import.meta.env.VITE_API_URL || '';
 
-  // Step 1: Fetch source accounts on mount
+  // Fetch accounts on mount
   useEffect(() => {
     const fetchAccounts = async () => {
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/api/accounts`, { headers: { Authorization: `Bearer ${token}` }
-        });
+        const headers = { Authorization: `Bearer ${token}` };
+        const response = await fetch(`${API_BASE}/api/accounts`, { headers });
         const data = await response.json();
+        
         if (response.ok && data.accounts) {
           setAccounts(data.accounts);
-          if (data.accounts.length === 1) {
-            setFromAccount(data.accounts[0]._id); // Auto-select if only one
+          if (data.accounts.length > 0) {
+            const firstAcc = data.accounts[0]._id;
+            setFromAccount(firstAcc);
+            fetchBalance(firstAcc, token);
           }
         }
       } catch (error) {
@@ -48,24 +50,47 @@ export const TransferPage: React.FC = () => {
     fetchAccounts();
   }, [API_BASE]);
 
+  // Fetch balance when source account changes
+  const fetchBalance = async (accountId: string, token: string | null) => {
+    try {
+      const balRes = await fetch(`${API_BASE}/api/accounts/balance/${accountId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (balRes.ok) {
+        const balData = await balRes.json();
+        setBalance(balData.balance || 0);
+      }
+    } catch (err) {
+      console.error("Failed to fetch balance:", err);
+    }
+  };
+
+  const handleSourceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selected = e.target.value;
+    setFromAccount(selected);
+    setBalance(null); // Clear until fetched
+    fetchBalance(selected, localStorage.getItem('token'));
+  };
+
   const handleTransfer = async () => {
-    if (isTransferInFlight.current) return;
-    isTransferInFlight.current = true;
     setIsProcessing(true);
-    setStep(4); // Move to processing/result step
+    setStep(4);
+    
+    const idempotencyKey = crypto.randomUUID();
 
     try {
-      // Reuse this key when retrying a request whose result was not confirmed.
-      const requestIdempotencyKey = idempotencyKey.current ?? crypto.randomUUID();
-      idempotencyKey.current = requestIdempotencyKey;
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/transactions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`
+      const response = await fetch(`${API_BASE}/api/transactions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           fromAccount,
           toAccount,
           amount: Number(amount),
-          idempotencyKey: requestIdempotencyKey
+          idempotencyKey
         })
       });
 
@@ -80,21 +105,20 @@ export const TransferPage: React.FC = () => {
         message: 'Transaction completed and committed to the ledger.',
         txId: data.transaction?._id
       });
-    } catch (error: unknown) {
+    } catch (error: any) {
       console.error(error);
-      if (error instanceof TypeError) {
+      if (error.message.includes('fetch')) {
         setResult({
           type: 'timeout',
-          message: 'The transaction status could not be confirmed because of a network error. The backend may still be processing it. Check your ledger history before retrying.'
+          message: 'The transaction request timed out. The backend may still be processing it. Please check your ledger history in a few minutes before retrying.'
         });
       } else {
         setResult({
           type: 'error',
-          message: error instanceof Error ? error.message : 'An unexpected error occurred.'
+          message: error.message || 'An unexpected error occurred.'
         });
       }
     } finally {
-      isTransferInFlight.current = false;
       setIsProcessing(false);
     }
   };
@@ -103,214 +127,213 @@ export const TransferPage: React.FC = () => {
     setToAccount('');
     setAmount('');
     setResult(null);
-    idempotencyKey.current = null;
     setStep(1);
   };
 
+  // Helper formatting for masking
+  const maskId = (id: string) => `•••• ${id.slice(-4)}`;
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <div className="mb-8">
+    <div className="max-w-4xl mx-auto space-y-8">
+      <div>
         <h2 className="text-2xl font-bold text-content-primary tracking-tight">Transfer Money</h2>
-        <p className="text-content-secondary mt-1">Initiate a secure, ACID-compliant ledger transfer.</p>
+        <p className="text-content-secondary mt-1">Move funds between accounts in four steps.</p>
       </div>
 
-      {/* Progress Indicator */}
-      <div className="flex items-center justify-between mb-10 relative">
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-px bg-app-border z-0" />
-        {[1, 2, 3, 4].map((num) => (
+      {/* Progress Indicator matching design reference */}
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          { num: 1, title: 'Source', desc: fromAccount ? maskId(fromAccount) : 'Select account' },
+          { num: 2, title: 'Destination & amount', desc: '' },
+          { num: 3, title: 'Review', desc: '' },
+          { num: 4, title: 'Confirm', desc: '' }
+        ].map((s) => (
           <div 
-            key={num} 
-            className={`relative z-10 w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border-2 transition-colors ${
-              step === num ? 'bg-primary border-primary text-white' :
-              step > num ? 'bg-primary-highlight border-primary-highlight text-white' :
-              'bg-app-bg border-app-border text-content-secondary'
+            key={s.num} 
+            className={`p-4 rounded-xl border transition-colors ${
+              step === s.num 
+                ? 'border-primary-highlight bg-app-card' 
+                : 'border-app-border bg-app-elevated opacity-70'
             }`}
           >
-            {step > num && num !== 4 ? <CheckCircle size={16} /> : num}
+            <p className={`text-sm font-medium ${step === s.num ? 'text-content-primary' : 'text-content-secondary'}`}>
+              {s.num} · {s.title}
+            </p>
+            {s.desc && step === s.num && (
+              <p className="text-xs text-content-secondary mt-2 font-mono">{s.desc}</p>
+            )}
           </div>
         ))}
       </div>
 
-      <div className="bg-app-card border border-app-border rounded-2xl p-8 shadow-xl">
+      <div className="bg-app-card border border-app-border rounded-2xl p-6 lg:p-8 max-w-2xl">
         
-        {/* STEP 1: SOURCE ACCOUNT */}
-        {step === 1 && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <h3 className="text-lg font-semibold text-content-primary mb-4">1. Select Source Account</h3>
-            {isLoadingAccounts ? (
-              <div className="flex items-center gap-3 text-content-secondary">
-                <Loader2 className="animate-spin" size={20} />
-                <span>Loading operational accounts...</span>
-              </div>
-            ) : accounts.length === 0 ? (
-              <div className="bg-status-critical/10 border border-status-critical/20 p-4 rounded-xl text-status-critical">
-                You do not have an active account to transfer from.
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {accounts.map(acc => (
-                  <label 
-                    key={acc._id} 
-                    className={`flex items-center p-4 border rounded-xl cursor-pointer transition-all ${
-                      fromAccount === acc._id
-                        ? 'border-primary bg-primary/10'
-                        : 'border-app-border bg-app-elevated hover:border-content-secondary/30'
-                    }`}
+        {/* COMBINED STEPS 1 & 2 (Form Entry) */}
+        {step < 3 && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            
+            {/* Source Account Dropdown */}
+            <div>
+              <label className="block text-sm font-medium text-content-secondary mb-2">From account</label>
+              {isLoadingAccounts ? (
+                <div className="flex items-center gap-3 text-content-secondary py-3">
+                  <Loader2 className="animate-spin" size={18} /> Loading...
+                </div>
+              ) : accounts.length === 0 ? (
+                <div className="bg-status-critical/10 border border-status-critical/20 p-3 rounded-lg text-status-critical text-sm">
+                  No active accounts found.
+                </div>
+              ) : (
+                <div className="relative">
+                  <select 
+                    value={fromAccount}
+                    onChange={handleSourceChange}
+                    className="w-full bg-app-elevated text-content-primary px-4 py-3 border border-app-border rounded-lg focus:outline-none focus:border-primary-highlight transition-colors appearance-none cursor-pointer text-sm"
                   >
-                    <input
-                      type="radio"
-                      name="sourceAccount"
-                      value={acc._id}
-                      checked={fromAccount === acc._id}
-                      onChange={(event) => setFromAccount(event.target.value)}
-                      disabled={acc.status !== 'ACTIVE'}
-                      className="sr-only"
-                    />
-                    <Wallet className={fromAccount === acc._id ? 'text-primary' : 'text-content-secondary'} size={24} />
-                    <div className="ml-4 flex-1">
-                      <p className="text-content-primary font-medium">Customer Account</p>
-                      <p className="text-content-secondary text-sm font-mono mt-0.5">{acc._id}</p>
-                    </div>
-                    <span className="text-sm font-medium text-status-success">{acc.status}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-            <div className="flex justify-end mt-8">
-              <button
-                type="button"
-                onClick={() => setStep(2)}
-                disabled={!accounts.some((account) => account._id === fromAccount && account.status === 'ACTIVE')}
-                className="flex items-center gap-2 bg-primary text-white py-2.5 px-6 rounded-lg font-medium hover:bg-primary-highlight transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Continue <ArrowRight size={18} />
-              </button>
+                    {accounts.map(acc => (
+                      <option key={acc._id} value={acc._id}>
+                        {maskId(acc._id)} - Available {balance !== null ? `₹${balance.toLocaleString('en-IN', {minimumFractionDigits: 2})}` : '...'}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-content-secondary">
+                    <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
 
-        {step === 2 && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <h3 className="text-lg font-semibold text-content-primary">2. Enter Destination Account</h3>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-content-secondary">Recipient account ID</span>
-              <input
+            {/* Destination Input */}
+            <div>
+              <label className="block text-sm font-medium text-content-secondary mb-2">To account</label>
+              <input 
                 type="text"
+                required
                 value={toAccount}
-                onChange={(event) => setToAccount(event.target.value.trim())}
-                placeholder="Enter the recipient account ID"
-                className="w-full bg-app-bg border border-app-border rounded-lg px-4 py-3 text-content-primary focus:outline-none focus:border-primary"
+                onChange={(e) => setToAccount(e.target.value)}
+                placeholder="Destination account"
+                className="w-full bg-app-elevated text-content-primary px-4 py-3 border border-app-border rounded-lg focus:outline-none focus:border-primary-highlight transition-colors font-mono text-sm placeholder:text-content-secondary/50 placeholder:font-sans"
               />
-            </label>
-            {toAccount === fromAccount && toAccount !== '' && (
-              <p className="text-sm text-status-critical">Choose an account different from the source account.</p>
-            )}
-            <div className="flex justify-between mt-8">
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className="px-5 py-2.5 rounded-lg border border-app-border text-content-secondary hover:text-content-primary transition-colors"
+            </div>
+
+            {/* Amount Input */}
+            <div>
+              <label className="block text-sm font-medium text-content-secondary mb-2">Amount (INR)</label>
+              <input 
+                type="number"
+                required
+                min="1"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-full bg-app-elevated text-content-primary px-4 py-3 border border-app-border rounded-lg focus:outline-none focus:border-primary-highlight transition-colors text-sm placeholder:text-content-secondary/50"
+              />
+            </div>
+
+            <div className="pt-4">
+              <button 
+                onClick={() => setStep(3)} 
+                disabled={!fromAccount || !toAccount || !amount || Number(amount) <= 0}
+                className="bg-primary-highlight text-white py-2.5 px-8 rounded-lg font-medium hover:bg-primary transition-colors disabled:opacity-50"
               >
-                Back
+                Continue
               </button>
-              <button
-                type="button"
-                onClick={() => setStep(3)}
-                disabled={!toAccount || toAccount === fromAccount}
-                className="flex items-center gap-2 bg-primary text-white py-2.5 px-6 rounded-lg font-medium hover:bg-primary-highlight transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Continue <ArrowRight size={18} />
-              </button>
+            </div>
+
+            <div className="pt-6 mt-6 border-t border-app-border">
+              <p className="text-xs text-content-secondary leading-relaxed max-w-lg">
+                Success is shown only after the backend confirms the transaction. After a timeout the app checks status or retries with the same idempotency key.
+              </p>
             </div>
           </div>
         )}
 
+        {/* STEP 3: REVIEW */}
         {step === 3 && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <h3 className="text-lg font-semibold text-content-primary">3. Confirm Transfer</h3>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-content-secondary">Amount</span>
-              <div className="flex items-center bg-app-bg border border-app-border rounded-lg px-4 focus-within:border-primary">
-                <span className="text-content-secondary">{accounts.find((account) => account._id === fromAccount)?.currency ?? 'USD'}</span>
-                <input
-                  type="number"
-                  min="0.0001"
-                  step="0.0001"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                  placeholder="0.00"
-                  className="w-full bg-transparent px-3 py-3 text-content-primary focus:outline-none"
-                />
+            <h3 className="text-lg font-semibold text-content-primary mb-4">Review Transfer</h3>
+            
+            <div className="bg-app-elevated border border-app-border rounded-xl p-6 space-y-4">
+              <div className="flex justify-between items-center pb-4 border-b border-app-border">
+                <span className="text-content-secondary text-sm">Source Account</span>
+                <span className="text-content-primary font-mono text-sm">{fromAccount}</span>
               </div>
-            </label>
-            <div className="rounded-xl border border-app-border bg-app-elevated p-4 space-y-3">
-              <div className="flex justify-between gap-4 text-sm">
-                <span className="text-content-secondary">From</span>
-                <span className="text-content-primary font-mono break-all">{fromAccount}</span>
+              <div className="flex justify-between items-center pb-4 border-b border-app-border">
+                <span className="text-content-secondary text-sm">Destination</span>
+                <span className="text-content-primary font-mono text-sm">{toAccount}</span>
               </div>
-              <div className="flex justify-between gap-4 text-sm">
-                <span className="text-content-secondary">To</span>
-                <span className="text-content-primary font-mono break-all">{toAccount}</span>
+              <div className="flex justify-between items-center pt-2">
+                <span className="text-content-secondary text-sm">Amount to Send</span>
+                <span className="text-3xl font-bold text-content-primary">₹{Number(amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</span>
               </div>
             </div>
-            <div className="flex justify-between mt-8">
-              <button
-                type="button"
-                onClick={() => setStep(2)}
-                className="px-5 py-2.5 rounded-lg border border-app-border text-content-secondary hover:text-content-primary transition-colors"
+
+            <div className="flex justify-between pt-4">
+              <button 
+                onClick={() => setStep(2)} 
+                className="text-content-secondary hover:text-content-primary py-2.5 px-4 font-medium transition-colors text-sm"
               >
                 Back
               </button>
-              <button
-                type="button"
+              <button 
                 onClick={handleTransfer}
-                disabled={!/^\d{1,15}(?:\.\d{1,4})?$/.test(amount) || Number(amount) <= 0 || isProcessing}
-                className="flex items-center gap-2 bg-primary text-white py-2.5 px-6 rounded-lg font-medium hover:bg-primary-highlight transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 bg-primary text-white py-2.5 px-6 rounded-lg font-medium hover:bg-primary-highlight transition-colors text-sm"
               >
-                <Send size={18} /> Transfer
+                Confirm Transfer
               </button>
             </div>
           </div>
         )}
 
+        {/* STEP 4: PROCESSING & RESULT */}
         {step === 4 && (
-          <div className="py-8 text-center space-y-5">
+          <div className="py-8 flex flex-col items-center justify-center text-center animate-in zoom-in-95 duration-500">
             {isProcessing ? (
               <>
-                <Loader2 className="animate-spin text-primary mx-auto" size={40} />
-                <h3 className="text-lg font-semibold text-content-primary">Processing transfer</h3>
-                <p className="text-content-secondary">Please keep this page open while the ledger confirms the transaction.</p>
+                <div className="relative mb-6">
+                  <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center animate-pulse">
+                    <Loader2 className="animate-spin text-primary-highlight" size={40} />
+                  </div>
+                </div>
+                <h3 className="text-xl font-semibold text-content-primary mb-2">Executing ACID Transaction...</h3>
+                <p className="text-status-pending text-sm max-w-sm">
+                  Waiting for backend confirmation. This may take ~15 seconds due to ledger synchronization. Do not close this page.
+                </p>
               </>
             ) : result ? (
               <>
-                {result.type === 'success' ? (
-                  <CheckCircle className="text-status-success mx-auto" size={40} />
-                ) : (
-                  <AlertCircle className={result.type === 'timeout' ? 'text-amber-500 mx-auto' : 'text-status-critical mx-auto'} size={40} />
-                )}
-                <h3 className="text-lg font-semibold text-content-primary">
-                  {result.type === 'success' ? 'Transfer complete' : result.type === 'timeout' ? 'Status not confirmed' : 'Transfer failed'}
-                </h3>
-                <p className="text-content-secondary">{result.message}</p>
-                {result.txId && <p className="text-sm text-content-secondary font-mono">Transaction ID: {result.txId}</p>}
-                <div className="flex justify-center gap-3 pt-3">
-                  {result.type === 'timeout' && (
-                    <button
-                      type="button"
-                      onClick={handleTransfer}
-                      className="px-5 py-2.5 rounded-lg border border-app-border text-content-primary hover:border-primary transition-colors"
-                    >
-                      Retry safely
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={resetFlow}
-                    className="px-5 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-highlight transition-colors"
-                  >
-                    Start another transfer
-                  </button>
+                <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 shadow-lg ${
+                  result.type === 'success' ? 'bg-status-success/10 text-status-success' :
+                  result.type === 'timeout' ? 'bg-status-pending/10 text-status-pending' :
+                  'bg-status-critical/10 text-status-critical'
+                }`}>
+                  {result.type === 'success' ? <CheckCircle size={40} /> : <AlertCircle size={40} />}
                 </div>
+                
+                <h3 className="text-xl font-semibold text-content-primary mb-3">
+                  {result.type === 'success' ? 'Transfer Successful' : result.type === 'timeout' ? 'Processing Timeout' : 'Transfer Failed'}
+                </h3>
+                
+                <p className="text-content-secondary mb-6 max-w-sm text-sm">
+                  {result.message}
+                </p>
+
+                {result.txId && (
+                  <div className="bg-app-elevated border border-app-border px-4 py-2 rounded-lg mb-8 inline-block">
+                    <span className="text-xs text-content-secondary mr-2">Ref ID:</span>
+                    <span className="text-sm font-mono text-content-primary">{result.txId}</span>
+                  </div>
+                )}
+
+                <button 
+                  onClick={resetFlow}
+                  className="bg-app-elevated border border-app-border text-content-primary py-2.5 px-6 rounded-lg font-medium hover:border-primary-highlight transition-colors text-sm"
+                >
+                  {result.type === 'success' ? 'Make Another Transfer' : 'Try Again'}
+                </button>
               </>
             ) : null}
           </div>
