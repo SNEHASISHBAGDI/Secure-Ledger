@@ -1,6 +1,4 @@
 // src/components/layout/Header.jsx
-import React from 'react';
-
 export default function Header({ onLogout }) {
   // Retrieve user info saved during login
   const userStr = localStorage.getItem('user');

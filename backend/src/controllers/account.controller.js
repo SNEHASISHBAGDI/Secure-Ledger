@@ -36,7 +36,12 @@ async function getUserAccountsController(req, res) {
         const userId = req.user.id || req.user._id;
 
         const accounts = await prisma.account.findMany({
-            where: { userId: userId }
+            where: {
+                userId,
+                role: "CUSTOMER",
+                status: "ACTIVE"
+            },
+            orderBy: { createdAt: "asc" }
         });
 
         const formattedAccounts = accounts.map(acc => ({
@@ -49,7 +54,13 @@ async function getUserAccountsController(req, res) {
         });
     } catch (error) {
         console.error("Error fetching user accounts:", error);
-        res.status(500).json({ message: "Internal server error" });
+        const isDatabaseError =
+            typeof error?.code === "string" && /^P\d{4}$/.test(error.code) ||
+            error?.name?.startsWith("Prisma");
+        res.status(500).json({
+            message: "Accounts could not be retrieved",
+            code: isDatabaseError ? "DATABASE_ERROR" : "INTERNAL_SERVER_ERROR"
+        });
     }
 }
 

@@ -14,6 +14,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, initialMode = tru
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const API_BASE = import.meta.env.VITE_API_URL || '';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,7 +32,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, initialMode = tru
 
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}${endpoint}`,
+        `${API_BASE}${endpoint}`,
         {
           method: 'POST',
           headers: {

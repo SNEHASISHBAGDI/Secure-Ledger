@@ -1,5 +1,4 @@
 // src/components/layout/Navbar.jsx
-import React from 'react';
 import { Button } from '../ui/Button';
 
 export function Navbar({ onLoginClick, onRegisterClick }) {

@@ -12,23 +12,50 @@ export const AccountsPage: React.FC = () => {
   const [account, setAccount] = useState<Account | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const API_BASE = import.meta.env.VITE_API_URL || '';
 
   const fetchAccount = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
+      }
       const response = await fetch(`${API_BASE}/api/accounts`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      const data = await response.json();
-      if (response.ok && data.accounts?.length > 0) {
-        setAccount(data.accounts[0]);
+      if (response.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
       }
+      const data: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string'
+            ? data.message
+            : `Account service returned HTTP ${response.status}.`
+        );
+      }
+      if (
+        typeof data !== 'object' ||
+        data === null ||
+        !('accounts' in data) ||
+        !Array.isArray(data.accounts)
+      ) {
+        throw new Error('Account service returned an invalid response.');
+      }
+      setAccount(data.accounts[0] ?? null);
     } catch (error) {
       console.error("Failed to fetch accounts:", error);
+      setError(error instanceof Error ? error.message : 'Unable to load your account. Please retry.');
     } finally {
       setIsLoading(false);
     }
@@ -40,18 +67,33 @@ export const AccountsPage: React.FC = () => {
 
   const handleCreateAccount = async () => {
     setIsCreatingAccount(true);
+    setError(null);
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
+      }
       const response = await fetch(`${API_BASE}/api/accounts`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (response.ok) {
-        await fetchAccount();
+      if (response.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
       }
+      if (!response.ok) {
+        const data: { message?: string } = await response.json();
+        throw new Error(data.message || `Account service returned HTTP ${response.status}.`);
+      }
+      await fetchAccount();
     } catch (error) {
       console.error("Error creating account:", error);
+      setError(error instanceof Error ? error.message : 'Unable to provision an account. Please retry.');
     } finally {
       setIsCreatingAccount(false);
     }
@@ -75,7 +117,18 @@ export const AccountsPage: React.FC = () => {
         </div>
       </div>
 
-      {!account ? (
+      {error ? (
+        <div className="bg-status-critical/10 border border-status-critical/20 rounded-2xl p-6 text-status-critical">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={fetchAccount}
+            className="mt-3 font-medium underline underline-offset-2"
+          >
+            Retry account loading
+          </button>
+        </div>
+      ) : !account ? (
         <div className="bg-app-card border border-app-border rounded-2xl p-10 text-center">
           <div className="w-16 h-16 bg-app-elevated border border-app-border rounded-full flex items-center justify-center mx-auto mb-6">
             <Wallet className="text-content-secondary" size={28} />

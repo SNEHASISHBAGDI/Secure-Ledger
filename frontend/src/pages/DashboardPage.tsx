@@ -23,20 +23,37 @@ export const DashboardPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const API_BASE = import.meta.env.VITE_API_URL || '';
 
   const fetchData = async () => {
+    setIsLoading(true);
     setIsRefreshing(true);
+    setFetchError(null);
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
+      }
       const headers = { Authorization: `Bearer ${token}` };
 
       // 1. Fetch Account
       const accRes = await fetch(`${API_BASE}/api/accounts`, { headers });
-      const accData = await accRes.json();
-      
-      if (accRes.ok && accData.accounts?.length > 0) {
+      if (accRes.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
+      }
+      const accData: { accounts?: Account[]; message?: string } = await accRes.json();
+      if (!accRes.ok) {
+        throw new Error(accData.message || `Account service returned HTTP ${accRes.status}.`);
+      }
+
+      if (accData.accounts && accData.accounts.length > 0) {
         const activeAcc = accData.accounts[0];
         setAccount(activeAcc);
 
@@ -44,7 +61,8 @@ export const DashboardPage: React.FC = () => {
         const balRes = await fetch(`${API_BASE}/api/accounts/balance/${activeAcc._id}`, { headers });
         if (balRes.ok) {
           const balData = await balRes.json();
-          setBalance(balData.balance || 0);
+          const parsedBalance = Number(balData.balance);
+          setBalance(Number.isFinite(parsedBalance) ? parsedBalance : 0);
         }
 
         // 3. Fetch Activity
@@ -53,9 +71,14 @@ export const DashboardPage: React.FC = () => {
           const actData = await actRes.json();
           setActivity(actData.activity || []);
         }
+      } else {
+        setAccount(null);
+        setBalance(null);
+        setActivity([]);
       }
     } catch (error) {
       console.error("Dashboard data fetch failed:", error);
+      setFetchError(error instanceof Error ? error.message : 'Unable to load dashboard data. Please retry.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -68,17 +91,32 @@ export const DashboardPage: React.FC = () => {
 
   const handleCreateAccount = async () => {
     setIsCreatingAccount(true);
+    setFetchError(null);
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
+      }
       const response = await fetch(`${API_BASE}/api/accounts`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (response.ok) {
-        await fetchData();
+      if (response.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
       }
+      if (!response.ok) {
+        const data: { message?: string } = await response.json();
+        throw new Error(data.message || `Account service returned HTTP ${response.status}.`);
+      }
+      await fetchData();
     } catch (error) {
       console.error("Error creating account:", error);
+      setFetchError(error instanceof Error ? error.message : 'Unable to provision an account. Please retry.');
     } finally {
       setIsCreatingAccount(false);
     }
@@ -103,6 +141,21 @@ export const DashboardPage: React.FC = () => {
       <div className="flex flex-col items-center justify-center h-64 text-content-secondary">
         <Loader2 className="animate-spin mb-4 text-primary" size={32} />
         <p>Loading workspace data...</p>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="bg-status-critical/10 border border-status-critical/20 rounded-2xl p-6 text-status-critical">
+        <p>{fetchError}</p>
+        <button
+          type="button"
+          onClick={fetchData}
+          className="mt-3 font-medium underline underline-offset-2"
+        >
+          Retry dashboard loading
+        </button>
       </div>
     );
   }

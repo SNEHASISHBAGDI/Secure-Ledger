@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
 
 export default function BalanceCard({ accountId, refreshTrigger }) {
@@ -6,8 +6,9 @@ export default function BalanceCard({ accountId, refreshTrigger }) {
   const [isLoading, setIsLoading] = useState(true);
   const [lastSynced, setLastSynced] = useState(new Date());
   const [error, setError] = useState(null);
+  const API_BASE = import.meta.env.VITE_API_URL || '';
 
-  const fetchBalance = async () => {
+  const fetchBalance = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
@@ -15,7 +16,7 @@ export default function BalanceCard({ accountId, refreshTrigger }) {
       const token = localStorage.getItem('token');
 
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/accounts/balance/${accountId}`,
+        `${API_BASE}/api/accounts/balance/${accountId}`,
         {
           method: "GET",
           headers: {
@@ -31,7 +32,8 @@ export default function BalanceCard({ accountId, refreshTrigger }) {
 
       const data = await response.json();
 
-      setBalance(data.balance || 0);
+      const parsedBalance = Number(data.balance);
+      setBalance(Number.isFinite(parsedBalance) ? parsedBalance : 0);
       setLastSynced(new Date());
 
     } catch (error) {
@@ -40,13 +42,16 @@ export default function BalanceCard({ accountId, refreshTrigger }) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [accountId, API_BASE]);
 
   useEffect(() => {
-    if (accountId) {
-      fetchBalance();
-    }
-  }, [accountId, refreshTrigger]);
+    if (!accountId) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void fetchBalance();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [accountId, refreshTrigger, fetchBalance]);
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">

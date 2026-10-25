@@ -1,5 +1,4 @@
 // src/components/sections/Features.jsx
-import React from 'react';
 import { Zap, ShieldCheck, PieChart } from 'lucide-react';
 
 const features = [

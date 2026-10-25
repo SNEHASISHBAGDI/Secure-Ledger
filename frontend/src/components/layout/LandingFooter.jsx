@@ -1,6 +1,4 @@
 // src/components/layout/LandingFooter.jsx
-import React from 'react';
-
 export function LandingFooter() {
   return (
     <footer className="bg-white pt-16 pb-16 border-t border-gray-100">

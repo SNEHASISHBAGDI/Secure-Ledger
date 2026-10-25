@@ -24,6 +24,7 @@ export default function App() {
   
   // Track path in state for SPA navigation
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
+  const API_BASE = import.meta.env.VITE_API_URL || '';
 
   // Handle browser back/forward buttons
   useEffect(() => {
@@ -59,7 +60,7 @@ export default function App() {
     try {
       const token = localStorage.getItem('token');
       if (token) {
-        await fetch(`${import.meta.env.VITE_API_URL}/api/auth/logout`, {
+        await fetch(`${API_BASE}/api/auth/logout`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,

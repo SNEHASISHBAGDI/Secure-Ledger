@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Loader2, CheckCircle, AlertCircle, Send, AlertTriangle } from 'lucide-react';
 
 interface Account {
   _id: string;
@@ -7,58 +7,196 @@ interface Account {
   status: string;
 }
 
+interface AccountFetchError {
+  type: 'forbidden' | 'network' | 'server' | 'invalid-response';
+  message: string;
+}
+
+interface PendingTransferAttempt {
+  idempotencyKey: string;
+  fromAccount: string;
+  toAccount: string;
+  amount: string;
+}
+
+const pendingTransferStorageKey = 'secure-ledger.pending-transfer';
+
+function readPendingTransferAttempt(): PendingTransferAttempt | null {
+  try {
+    const storedAttempt = window.sessionStorage.getItem(pendingTransferStorageKey);
+    if (!storedAttempt) return null;
+
+    const attempt: unknown = JSON.parse(storedAttempt);
+    if (
+      typeof attempt === 'object' &&
+      attempt !== null &&
+      'idempotencyKey' in attempt &&
+      typeof attempt.idempotencyKey === 'string' &&
+      'fromAccount' in attempt &&
+      typeof attempt.fromAccount === 'string' &&
+      'toAccount' in attempt &&
+      typeof attempt.toAccount === 'string' &&
+      'amount' in attempt &&
+      typeof attempt.amount === 'string'
+    ) {
+      return {
+        idempotencyKey: attempt.idempotencyKey,
+        fromAccount: attempt.fromAccount,
+        toAccount: attempt.toAccount,
+        amount: attempt.amount
+      };
+    }
+
+    console.error('Stored transfer attempt has an invalid format.');
+    window.sessionStorage.removeItem(pendingTransferStorageKey);
+  } catch (error) {
+    console.error('Could not restore a pending transfer attempt:', error);
+  }
+  return null;
+}
+
+function clearPendingTransferAttempt() {
+  try {
+    window.sessionStorage.removeItem(pendingTransferStorageKey);
+  } catch (error) {
+    console.error('Could not clear the pending transfer attempt:', error);
+  }
+}
+
 export const TransferPage: React.FC = () => {
-  const [step, setStep] = useState(1);
+  const [restoredAttempt] = useState<PendingTransferAttempt | null>(readPendingTransferAttempt);
+  const [step, setStep] = useState(restoredAttempt ? 4 : 1);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
+  const [fetchError, setFetchError] = useState<AccountFetchError | null>(null);
+  const [accountLoadAttempt, setAccountLoadAttempt] = useState(0);
   const [balance, setBalance] = useState<number | null>(null);
 
-  // Form State
-  const [fromAccount, setFromAccount] = useState<string>('');
-  const [toAccount, setToAccount] = useState<string>('');
-  const [amount, setAmount] = useState<string>('');
+  const [fromAccount, setFromAccount] = useState<string>(restoredAttempt?.fromAccount ?? '');
+  const [toAccount, setToAccount] = useState<string>(restoredAttempt?.toAccount ?? '');
+  const [amount, setAmount] = useState<string>(restoredAttempt?.amount ?? '');
   
-  // Transaction State
   const [isProcessing, setIsProcessing] = useState(false);
-  const [result, setResult] = useState<{ type: 'success' | 'error' | 'timeout', message: string, txId?: string } | null>(null);
+  const [result, setResult] = useState<{ type: 'success' | 'error' | 'timeout', message: string, txId?: string } | null>(
+    restoredAttempt
+      ? {
+          type: 'timeout',
+          message: 'A transfer was awaiting confirmation when this page was last open. Retry it safely with the saved request key.'
+        }
+      : null
+  );
+  const isTransferInFlight = useRef(false);
+  const idempotencyKey = useRef<string | null>(restoredAttempt?.idempotencyKey ?? null);
 
   const API_BASE = import.meta.env.VITE_API_URL || '';
 
-  // Fetch accounts on mount
   useEffect(() => {
+    let isCancelled = false;
     const fetchAccounts = async () => {
+      setIsLoadingAccounts(true);
+      setFetchError(null);
       try {
         const token = localStorage.getItem('token');
-        const headers = { Authorization: `Bearer ${token}` };
-        const response = await fetch(`${API_BASE}/api/accounts`, { headers });
-        const data = await response.json();
-        
-        if (response.ok && data.accounts) {
-          setAccounts(data.accounts);
-          if (data.accounts.length > 0) {
-            const firstAcc = data.accounts[0]._id;
-            setFromAccount(firstAcc);
-            fetchBalance(firstAcc, token);
-          }
+        if (!token) {
+          localStorage.removeItem('user');
+          window.location.assign('/');
+          return;
         }
-      } catch (error) {
+
+        const response = await fetch(`${API_BASE}/api/accounts`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        if (!response.ok) {
+          if (response.status === 401) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.assign('/');
+            return;
+          }
+          if (response.status === 403) {
+            setFetchError({
+              type: 'forbidden',
+              message: 'Your account is not authorized to view these accounts.'
+            });
+            return;
+          }
+          const errorData: unknown = await response.json().catch(() => null);
+          const errorCode = typeof errorData === 'object' && errorData !== null && 'code' in errorData
+            ? errorData.code
+            : undefined;
+          setFetchError({
+            type: 'server',
+            message: errorCode === 'DATABASE_ERROR'
+              ? 'The database could not retrieve your accounts. Please try again later.'
+              : 'The server could not retrieve your accounts. Please try again.'
+          });
+          return;
+        }
+
+        const data: unknown = await response.json();
+        if (
+          typeof data !== 'object' ||
+          data === null ||
+          !('accounts' in data) ||
+          !Array.isArray(data.accounts) ||
+          !data.accounts.every((account) =>
+            typeof account === 'object' &&
+            account !== null &&
+            '_id' in account &&
+            typeof account._id === 'string' &&
+            'currency' in account &&
+            typeof account.currency === 'string' &&
+            'status' in account &&
+            typeof account.status === 'string'
+          )
+        ) {
+          setFetchError({
+            type: 'invalid-response',
+            message: 'The server returned an invalid accounts response.'
+          });
+          return;
+        }
+        if (isCancelled) return;
+        const eligibleAccounts = data.accounts.filter((account) => account.status === 'ACTIVE');
+        setAccounts(eligibleAccounts);
+        if (eligibleAccounts.length > 0) {
+          const sourceAccount = eligibleAccounts.find(
+            account => account._id === restoredAttempt?.fromAccount
+          ) ?? eligibleAccounts[0];
+          if (!restoredAttempt) setFromAccount(sourceAccount._id);
+          void fetchBalance(sourceAccount._id, token);
+        }
+      } catch (error: unknown) {
         console.error("Failed to fetch accounts:", error);
+        if (!isCancelled) {
+          setFetchError({
+            type: error instanceof TypeError ? 'network' : 'server',
+            message: error instanceof TypeError
+              ? 'Could not reach the account service. Check your network connection or API configuration.'
+              : 'The account service returned an unexpected response. Please retry.'
+          });
+        }
       } finally {
-        setIsLoadingAccounts(false);
+        if (!isCancelled) setIsLoadingAccounts(false);
       }
     };
-    fetchAccounts();
-  }, [API_BASE]);
+    void fetchAccounts();
+    return () => {
+      isCancelled = true;
+    };
+  }, [API_BASE, accountLoadAttempt, restoredAttempt]);
 
-  // Fetch balance when source account changes
   const fetchBalance = async (accountId: string, token: string | null) => {
+    if (!token) return;
     try {
       const balRes = await fetch(`${API_BASE}/api/accounts/balance/${accountId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (balRes.ok) {
         const balData = await balRes.json();
-        setBalance(balData.balance || 0);
+        const parsedBalance = Number(balData.balance);
+        setBalance(Number.isFinite(parsedBalance) ? parsedBalance : 0);
       }
     } catch (err) {
       console.error("Failed to fetch balance:", err);
@@ -68,18 +206,52 @@ export const TransferPage: React.FC = () => {
   const handleSourceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selected = e.target.value;
     setFromAccount(selected);
-    setBalance(null); // Clear until fetched
-    fetchBalance(selected, localStorage.getItem('token'));
+    setBalance(null);
+    void fetchBalance(selected, localStorage.getItem('token'));
   };
 
   const handleTransfer = async () => {
+    if (isTransferInFlight.current || isProcessing) return;
+    if (
+      !fromAccount ||
+      !toAccount ||
+      fromAccount === toAccount ||
+      !/^\d{1,15}(?:\.\d{1,4})?$/.test(amount) ||
+      Number(amount) <= 0
+    ) {
+      setResult({ type: 'error', message: 'Enter a valid source, destination, and positive amount before submitting.' });
+      setStep(4);
+      return;
+    }
+
+    isTransferInFlight.current = true;
     setIsProcessing(true);
     setStep(4);
-    
-    const idempotencyKey = crypto.randomUUID();
 
+    let responseReceived = false;
+    let responseWasSuccessful = false;
+    let pendingServerOperation = false;
+    let serverFailureUnknown = false;
+    let requestSent = false;
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
+      }
+      const requestIdempotencyKey = idempotencyKey.current ?? crypto.randomUUID();
+      idempotencyKey.current = requestIdempotencyKey;
+      window.sessionStorage.setItem(
+        pendingTransferStorageKey,
+        JSON.stringify({
+          idempotencyKey: requestIdempotencyKey,
+          fromAccount,
+          toAccount,
+          amount
+        } satisfies PendingTransferAttempt)
+      );
+      requestSent = true;
       const response = await fetch(`${API_BASE}/api/transactions`, {
         method: 'POST',
         headers: {
@@ -89,36 +261,87 @@ export const TransferPage: React.FC = () => {
         body: JSON.stringify({
           fromAccount,
           toAccount,
-          amount: Number(amount),
-          idempotencyKey
+          amount,
+          idempotencyKey: requestIdempotencyKey
         })
       });
 
-      const data = await response.json();
+      responseReceived = true;
+      if (response.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.assign('/');
+        return;
+      }
+      responseWasSuccessful = response.ok;
+      if (response.status >= 500) serverFailureUnknown = true;
+      const payload: unknown = await response.json();
+      let responseMessage: string | undefined;
+      let transactionId: string | undefined;
+      if (typeof payload === 'object' && payload !== null) {
+        if ('message' in payload && typeof payload.message === 'string') {
+          responseMessage = payload.message;
+        }
+        if (
+          'transaction' in payload &&
+          typeof payload.transaction === 'object' &&
+          payload.transaction !== null &&
+          '_id' in payload.transaction &&
+          typeof payload.transaction._id === 'string'
+        ) {
+          transactionId = payload.transaction._id;
+        }
+      }
 
       if (!response.ok) {
-        throw new Error(data.message || 'Transaction failed or was rejected by the ledger engine.');
+        if (response.status === 409 && responseMessage?.includes('still processing')) {
+          pendingServerOperation = true;
+          throw new Error(responseMessage);
+        }
+        if (response.status === 409 && responseMessage?.includes('already exists')) {
+          throw new Error("A transfer with this payload conflicts with an existing request. Please modify the transfer or review your transaction history.");
+        }
+        throw new Error(responseMessage || 'Transaction failed or was rejected by the ledger engine.');
+      }
+
+      if (!transactionId) {
+        throw new Error('The server accepted the request but did not return a transaction record.');
       }
 
       setResult({
         type: 'success',
-        message: 'Transaction completed and committed to the ledger.',
-        txId: data.transaction?._id
+        message: responseMessage === "Transaction already processed"
+          ? 'Transfer previously completed. State safely recovered.'
+          : 'Transaction completed and committed to the ledger.',
+        txId: transactionId
       });
-    } catch (error: any) {
+      clearPendingTransferAttempt();
+      idempotencyKey.current = null;
+    } catch (error: unknown) {
       console.error(error);
-      if (error.message.includes('fetch')) {
+      if (
+        pendingServerOperation ||
+        serverFailureUnknown ||
+        (requestSent && !responseReceived) ||
+        responseWasSuccessful ||
+        (responseReceived && !(error instanceof Error))
+      ) {
         setResult({
           type: 'timeout',
-          message: 'The transaction request timed out. The backend may still be processing it. Please check your ledger history in a few minutes before retrying.'
+          message: pendingServerOperation
+            ? 'The server reports this transfer is still processing. Retry safely with the same request key or check transaction history.'
+            : 'The transfer outcome could not be confirmed. Check transaction history before retrying; a retry will reuse the same request key.'
         });
       } else {
+        clearPendingTransferAttempt();
+        idempotencyKey.current = null;
         setResult({
           type: 'error',
-          message: error.message || 'An unexpected error occurred.'
+          message: error instanceof Error ? error.message : 'An unexpected error occurred.'
         });
       }
     } finally {
+      isTransferInFlight.current = false;
       setIsProcessing(false);
     }
   };
@@ -128,19 +351,19 @@ export const TransferPage: React.FC = () => {
     setAmount('');
     setResult(null);
     setStep(1);
+    clearPendingTransferAttempt();
+    idempotencyKey.current = null;
   };
 
-  // Helper formatting for masking
   const maskId = (id: string) => `•••• ${id.slice(-4)}`;
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
         <h2 className="text-2xl font-bold text-content-primary tracking-tight">Transfer Money</h2>
-        <p className="text-content-secondary mt-1">Move funds between accounts in four steps.</p>
+        <p className="text-content-secondary mt-1">Move funds between accounts safely.</p>
       </div>
 
-      {/* Progress Indicator matching design reference */}
       <div className="grid grid-cols-4 gap-4">
         {[
           { num: 1, title: 'Source', desc: fromAccount ? maskId(fromAccount) : 'Select account' },
@@ -167,21 +390,40 @@ export const TransferPage: React.FC = () => {
       </div>
 
       <div className="bg-app-card border border-app-border rounded-2xl p-6 lg:p-8 max-w-2xl">
-        
-        {/* COMBINED STEPS 1 & 2 (Form Entry) */}
         {step < 3 && (
           <div className="space-y-6 animate-in fade-in duration-500">
-            
-            {/* Source Account Dropdown */}
             <div>
               <label className="block text-sm font-medium text-content-secondary mb-2">From account</label>
               {isLoadingAccounts ? (
                 <div className="flex items-center gap-3 text-content-secondary py-3">
                   <Loader2 className="animate-spin" size={18} /> Loading...
                 </div>
+              ) : fetchError ? (
+                <div className="bg-status-critical/10 border border-status-critical/20 p-3 rounded-lg text-status-critical text-sm flex items-start gap-2">
+                  <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                  <div className="space-y-3">
+                    <p>{fetchError.message}</p>
+                    {(fetchError.type === 'network' || fetchError.type === 'server' || fetchError.type === 'invalid-response') && (
+                      <button
+                        type="button"
+                        onClick={() => setAccountLoadAttempt((attempt) => attempt + 1)}
+                        className="font-medium underline underline-offset-2 hover:text-content-primary"
+                      >
+                        Retry account loading
+                      </button>
+                    )}
+                  </div>
+                </div>
               ) : accounts.length === 0 ? (
-                <div className="bg-status-critical/10 border border-status-critical/20 p-3 rounded-lg text-status-critical text-sm">
-                  No active accounts found.
+                <div className="bg-status-pending/10 border border-status-pending/20 p-3 rounded-lg text-status-pending text-sm flex items-start gap-2">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-semibold block mb-1">No active accounts found.</span>
+                    <span>This was confirmed by the account service. Provision an account to make transfers.</span>
+                    <a href="/accounts" className="mt-2 inline-block font-medium underline underline-offset-2 hover:text-content-primary">
+                      Open account setup
+                    </a>
+                  </div>
                 </div>
               ) : (
                 <div className="relative">
@@ -196,38 +438,35 @@ export const TransferPage: React.FC = () => {
                       </option>
                     ))}
                   </select>
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-content-secondary">
-                    <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </div>
                 </div>
               )}
             </div>
 
-            {/* Destination Input */}
             <div>
               <label className="block text-sm font-medium text-content-secondary mb-2">To account</label>
               <input 
                 type="text"
                 required
                 value={toAccount}
-                onChange={(e) => setToAccount(e.target.value)}
-                placeholder="Destination account"
+                onChange={(e) => {
+                  setToAccount(e.target.value);
+                }}
+                placeholder="Destination account UUID"
                 className="w-full bg-app-elevated text-content-primary px-4 py-3 border border-app-border rounded-lg focus:outline-none focus:border-primary-highlight transition-colors font-mono text-sm placeholder:text-content-secondary/50 placeholder:font-sans"
               />
             </div>
 
-            {/* Amount Input */}
             <div>
               <label className="block text-sm font-medium text-content-secondary mb-2">Amount (INR)</label>
               <input 
                 type="number"
                 required
-                min="1"
-                step="0.01"
+                min="0.0001"
+                step="0.0001"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                }}
                 placeholder="0.00"
                 className="w-full bg-app-elevated text-content-primary px-4 py-3 border border-app-border rounded-lg focus:outline-none focus:border-primary-highlight transition-colors text-sm placeholder:text-content-secondary/50"
               />
@@ -236,22 +475,21 @@ export const TransferPage: React.FC = () => {
             <div className="pt-4">
               <button 
                 onClick={() => setStep(3)} 
-                disabled={!fromAccount || !toAccount || !amount || Number(amount) <= 0}
+                disabled={
+                  !fromAccount ||
+                  !toAccount ||
+                  fromAccount === toAccount ||
+                  !/^\d{1,15}(?:\.\d{1,4})?$/.test(amount) ||
+                  Number(amount) <= 0
+                }
                 className="bg-primary-highlight text-white py-2.5 px-8 rounded-lg font-medium hover:bg-primary transition-colors disabled:opacity-50"
               >
                 Continue
               </button>
             </div>
-
-            <div className="pt-6 mt-6 border-t border-app-border">
-              <p className="text-xs text-content-secondary leading-relaxed max-w-lg">
-                Success is shown only after the backend confirms the transaction. After a timeout the app checks status or retries with the same idempotency key.
-              </p>
-            </div>
           </div>
         )}
 
-        {/* STEP 3: REVIEW */}
         {step === 3 && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h3 className="text-lg font-semibold text-content-primary mb-4">Review Transfer</h3>
@@ -280,15 +518,15 @@ export const TransferPage: React.FC = () => {
               </button>
               <button 
                 onClick={handleTransfer}
+                disabled={isProcessing}
                 className="flex items-center gap-2 bg-primary text-white py-2.5 px-6 rounded-lg font-medium hover:bg-primary-highlight transition-colors text-sm"
               >
-                Confirm Transfer
+                <Send size={18} /> Confirm & Transfer
               </button>
             </div>
           </div>
         )}
 
-        {/* STEP 4: PROCESSING & RESULT */}
         {step === 4 && (
           <div className="py-8 flex flex-col items-center justify-center text-center animate-in zoom-in-95 duration-500">
             {isProcessing ? (
@@ -300,7 +538,7 @@ export const TransferPage: React.FC = () => {
                 </div>
                 <h3 className="text-xl font-semibold text-content-primary mb-2">Executing ACID Transaction...</h3>
                 <p className="text-status-pending text-sm max-w-sm">
-                  Waiting for backend confirmation. This may take ~15 seconds due to ledger synchronization. Do not close this page.
+                  Waiting for the backend to atomically post both ledger entries. Do not submit another transfer while this one is processing.
                 </p>
               </>
             ) : result ? (
@@ -328,12 +566,24 @@ export const TransferPage: React.FC = () => {
                   </div>
                 )}
 
-                <button 
-                  onClick={resetFlow}
-                  className="bg-app-elevated border border-app-border text-content-primary py-2.5 px-6 rounded-lg font-medium hover:border-primary-highlight transition-colors text-sm"
-                >
-                  {result.type === 'success' ? 'Make Another Transfer' : 'Try Again'}
-                </button>
+                {result.type === 'timeout' ? (
+                  <button
+                    type="button"
+                    onClick={handleTransfer}
+                    disabled={isProcessing}
+                    className="bg-primary text-white py-2.5 px-6 rounded-lg font-medium hover:bg-primary-highlight transition-colors text-sm disabled:opacity-50"
+                  >
+                    Retry same transfer safely
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={resetFlow}
+                    className="bg-app-elevated border border-app-border text-content-primary py-2.5 px-6 rounded-lg font-medium hover:border-primary-highlight transition-colors text-sm"
+                  >
+                    {result.type === 'success' ? 'Make Another Transfer' : 'Start a new transfer'}
+                  </button>
+                )}
               </>
             ) : null}
           </div>

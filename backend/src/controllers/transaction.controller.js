@@ -117,6 +117,12 @@ async function createTransaction(req, res) {
                     lockedToAccount.status !== "ACTIVE") {
                     return { inactiveAccounts: true };
                 }
+                if (lockedFromAccount.currency !== lockedToAccount.currency) {
+                    return { currencyMismatch: true };
+                }
+                if (lockedFromAccount.currency !== "INR") {
+                    return { unsupportedCurrency: true };
+                }
                 if (lockedFromAccount.userId !== (req.user.id || req.user._id) ||
                     lockedFromAccount.role !== "CUSTOMER" ||
                     lockedToAccount.role !== "CUSTOMER") {
@@ -148,9 +154,6 @@ async function createTransaction(req, res) {
                     }
                 });
 
-                // Simulated delay from original flow
-                await new Promise((resolve) => setTimeout(resolve, 15 * 1000));
-
                 // 7. Create CREDIT ledger entry
                 await tx.ledger.create({
                     data: {
@@ -167,9 +170,7 @@ async function createTransaction(req, res) {
                     data: { status: "COMPLETED" }
                 });
 
-                return updatedTx;
-            }, {
-                timeout: 25000 // Accommodate 15s simulated delay
+                return { transaction: updatedTx };
             });
         } catch (error) {
             if (error.code === "P2002") {
@@ -193,6 +194,12 @@ async function createTransaction(req, res) {
             return res.status(400).json({
                 message: "Both fromAccount and toAccount must be ACTIVE to process transaction"
             });
+        }
+        if (result.unsupportedCurrency) {
+            return res.status(400).json({ message: "Only INR transfers are currently supported" });
+        }
+        if (result.currencyMismatch) {
+            return res.status(400).json({ message: "Source and destination accounts must use the same currency" });
         }
         if (result.unauthorizedAccounts) {
             return res.status(403).json({ message: "Transactions are only allowed between your customer accounts" });

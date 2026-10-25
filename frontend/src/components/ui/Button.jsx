@@ -1,6 +1,4 @@
 // src/components/ui/Button.jsx
-import React from 'react';
-
 export function Button({ variant = 'primary', children, className = '', ...props }) {
   const baseStyles = "inline-flex items-center justify-center rounded-lg font-semibold transition-all duration-200 py-2.5";
   

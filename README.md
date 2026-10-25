@@ -38,6 +38,20 @@ docker compose up -d --build backend
 docker compose exec backend npm run db:seed:system
 ```
 
+## Local Vite development and Render
+
+Run the backend on port `3000` and start Vite from `frontend`. When
+`VITE_API_URL` is unset or empty, Vite proxies `/api` requests to
+`http://127.0.0.1:3000`. Vite reads `.env` files from the frontend project root;
+an env file under `frontend/src` is not loaded.
+
+For a separately hosted Render frontend, set `VITE_API_URL` in the frontend
+build environment to the backend's public origin (without an `/api` suffix),
+and set the backend's `CLIENT_ORIGINS` to the exact frontend origin. The
+current known frontend origin is `https://atomicedger-1.onrender.com`. These
+values are build/deployment settings; changing the source allowlist does not
+update an already deployed service.
+
 Stop the containers while keeping the database volume:
 
 ```sh

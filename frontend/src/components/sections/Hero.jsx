@@ -1,5 +1,4 @@
 // src/components/sections/Hero.jsx
-import React from 'react';
 import { Button } from '../ui/Button';
 import heroImg from "../../assets/bankingpng.png";
 

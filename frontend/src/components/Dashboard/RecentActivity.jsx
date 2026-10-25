@@ -1,5 +1,3 @@
-import React from 'react';
-
 export default function RecentActivity({ activities = [] }) {
   // Helper to format both dates and times nicely, with robust fallbacks
   const formatDateTime = (dateValue) => {
